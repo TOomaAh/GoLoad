@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"gestionnaire-telechargement/internal/database"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -22,19 +21,17 @@ type DownloadList struct {
 	downloadSpeeds map[string]float64
 	downloadsMutex sync.Mutex
 	allDownloads   []*downloadItem // Ajoutez ce champ
-	db             *database.Database
 }
 
 // Supprimez la définition de downloadItem ici
 
-func NewDownloadList(ui *UI, db *database.Database) *DownloadList {
+func NewDownloadList(ui *UI) *DownloadList {
 	dl := &DownloadList{
 		ui:             ui,
 		container:      container.NewVBox(),
 		downloads:      make(map[string]*downloadItem),
 		downloadSpeeds: make(map[string]float64),
 		allDownloads:   make([]*downloadItem, 0),
-		db:             db,
 	}
 	// Déplacez loadExistingDownloads dans une méthode séparée
 	return dl
@@ -46,7 +43,7 @@ func (dl *DownloadList) Initialize() {
 }
 
 func (dl *DownloadList) loadExistingDownloads() {
-	downloads, err := dl.db.GetAllDownloads()
+	downloads, err := dl.ui.db.GetAllDownloads()
 	if err != nil {
 		showError(dl.ui, "Erreur", "Impossible de charger les téléchargements existants")
 		return
@@ -178,7 +175,7 @@ func (dl *DownloadList) updateProgress(url string, progress float64) {
 				dl.updatePauseResumeButton(url)
 			}
 
-			details, err := dl.db.GetDownloadDetails(url)
+			details, err := dl.ui.db.GetDownloadDetails(url)
 			if err == nil {
 				if now.Sub(item.lastUpdate) >= speedUpdateInterval {
 					elapsed := now.Sub(item.lastUpdate).Seconds()
@@ -292,7 +289,7 @@ func (dl *DownloadList) updateDownloadSpeed(url string) {
 	defer dl.downloadsMutex.Unlock()
 
 	if item, exists := dl.ui.downloads[url]; exists {
-		details, err := dl.db.GetDownloadDetails(url)
+		details, err := dl.ui.db.GetDownloadDetails(url)
 		if err != nil {
 			return
 		}

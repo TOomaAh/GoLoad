@@ -59,8 +59,8 @@ func NewUI(d *downloader.Downloader, db *database.Database) *UI {
 		db:              db,
 	}
 	d.SetProgressCallback(ui.updateProgress)
-	ui.downloadList = NewDownloadList(ui, db)
-	ui.detailsPanel = NewDetailsPanel(ui, db)
+	ui.downloadList = NewDownloadList(ui)
+	ui.detailsPanel = NewDetailsPanel(ui)
 
 	ui.sideMenu = ui.createSideMenu()
 
@@ -110,7 +110,6 @@ func (u *UI) createSideMenu() *fyne.Container {
 		container.NewBorder(
 			container.NewVBox(
 				widget.NewLabelWithStyle(T("filters"), fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
-				widget.NewSeparator(),
 			),
 			nil, nil, nil,
 			container.NewStack(container.NewVScroll(filterContainer)),
@@ -137,7 +136,7 @@ func (u *UI) Start() {
 	u.window = u.app.NewWindow(T("windowTitle"))
 
 	u.downloads = make(map[string]*downloadItem)
-	u.downloadList = NewDownloadList(u, u.db)
+	u.downloadList = NewDownloadList(u)
 
 	u.loadExistingDownloads()
 
@@ -161,7 +160,7 @@ func (u *UI) Start() {
 
 	menuWidth := float32(220)
 	u.sideMenu.Resize(fyne.NewSize(menuWidth, u.window.Canvas().Size().Height))
-	menuContainer := container.NewHBox(u.sideMenu, widget.NewSeparator())
+	menuContainer := container.NewHBox(u.sideMenu)
 
 	overlay := container.NewStack(mainContent, menuContainer)
 

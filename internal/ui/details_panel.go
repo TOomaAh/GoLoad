@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"gestionnaire-telechargement/internal/database"
 	"gestionnaire-telechargement/internal/downloader"
 	"path/filepath"
 
@@ -25,10 +24,9 @@ type DetailsPanel struct {
 	savePathLabel    *widget.Label       // Ajouté
 	progressBar      *widget.ProgressBar // Ajouté
 	chunkProgressBar *ChunkProgressBar   // Ajouté
-	db               *database.Database  // Ajouté
 }
 
-func NewDetailsPanel(ui *UI, db *database.Database) *DetailsPanel {
+func NewDetailsPanel(ui *UI) *DetailsPanel {
 	dp := &DetailsPanel{ui: ui}
 	dp.container = container.NewVBox()
 	dp.card = widget.NewCard("Détails du téléchargement", "", dp.container)
@@ -47,7 +45,7 @@ func NewDetailsPanel(ui *UI, db *database.Database) *DetailsPanel {
 }
 
 func (dp *DetailsPanel) showDownloadDetails(url string) {
-	details, err := dp.db.GetDownloadDetails(url)
+	details, err := dp.ui.db.GetDownloadDetails(url)
 	if err != nil {
 		dialog.ShowError(err, dp.ui.window)
 		return
@@ -87,11 +85,9 @@ func (dp *DetailsPanel) updateDetailsContainer() {
 	})
 	closeButton.Importance = widget.LowImportance
 
-	header := container.NewBorder(nil, nil, nil, closeButton,
-		widget.NewLabel("Détails du téléchargement"))
+	header := container.NewBorder(nil, nil, nil, closeButton)
 
 	dp.container.Add(header)
-	dp.container.Add(widget.NewSeparator())
 	dp.container.Add(widget.NewLabel(fmt.Sprintf("Nom du fichier: %s", getFileName(dp.selectedDownload.URL))))
 	dp.container.Add(widget.NewLabel(fmt.Sprintf("Chemin de sauvegarde: %s", dp.selectedDownload.SavePath)))
 
@@ -121,7 +117,7 @@ func (dp *DetailsPanel) updateProgress() {
 		return
 	}
 
-	details, err := dp.db.GetDownloadDetails(dp.selectedDownload.URL)
+	details, err := dp.ui.db.GetDownloadDetails(dp.selectedDownload.URL)
 	if err != nil {
 		return
 	}
