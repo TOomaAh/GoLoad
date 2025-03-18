@@ -14,6 +14,10 @@ export function GetAllDownloads() {
   return window['go']['app']['App']['GetAllDownloads']();
 }
 
+export function GetAppInfo() {
+  return window['go']['app']['App']['GetAppInfo']();
+}
+
 export function GetDownloadsByStatus(arg1) {
   return window['go']['app']['App']['GetDownloadsByStatus'](arg1);
 }

@@ -3,6 +3,7 @@ package download
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"sync"
 	"time"
 
@@ -30,9 +31,10 @@ type Download struct {
 	Error       string    `json:"error_message,omitempty"`
 
 	// Champs pour le suivi interne
-	cancel    context.CancelFunc `json:"-" gorm:"-"`
-	speedCalc *SpeedCalculator   `json:"-" gorm:"-"`
-	mutex     sync.RWMutex       `json:"-" gorm:"-"`
+	cancel      context.CancelFunc `json:"-" gorm:"-"`
+	speedCalc   *SpeedCalculator   `json:"-" gorm:"-"`
+	mutex       sync.RWMutex       `json:"-" gorm:"-"`
+	controlChan chan string        `gorm:"-"`
 }
 
 // NewDownload crée une nouvelle instance de téléchargement
@@ -50,6 +52,7 @@ func NewDownload(url, filename, location string) *Download {
 		MaxAttempts: 3,
 		speedCalc:   NewSpeedCalculator(),
 		mutex:       sync.RWMutex{},
+		controlChan: make(chan string, 1),
 	}
 }
 
@@ -65,9 +68,8 @@ func (d *Download) Unlock() {
 
 // Cancel annule le téléchargement en cours
 func (d *Download) Cancel() {
-	d.Lock()
-	defer d.Unlock()
-
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
 	if d.cancel != nil {
 		d.cancel()
 	}
@@ -75,10 +77,15 @@ func (d *Download) Cancel() {
 
 // GetSpeedCalc retourne le calculateur de vitesse
 func (d *Download) GetSpeedCalc() *SpeedCalculator {
-	d.Lock()
-	defer d.Unlock()
-
+	d.mutex.RLock()
+	defer d.mutex.RUnlock()
 	return d.speedCalc
+}
+
+func (d *Download) SetSpeedCalc(sc *SpeedCalculator) {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	d.speedCalc = sc
 }
 
 // SetCancel définit la fonction d'annulation
@@ -121,4 +128,29 @@ func (d *Download) MarshalJSON() ([]byte, error) {
 		TotalSizeReadable:  d.HumanReadableSize(),
 		SpeedReadable:      d.HumanReadableSpeed(),
 	})
+}
+
+func (d *Download) GetNameFileWithHeadRequest() (string, error) {
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "HEAD", d.URL, nil)
+	if err != nil {
+		return "", err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", err
+	}
+
+	return resp.Header.Get("Content-Disposition"), nil
+
 }

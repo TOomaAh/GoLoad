@@ -1,3 +1,22 @@
+export namespace app {
+	
+	export class AppInfo {
+	    Version: string;
+	    Name: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AppInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Version = source["Version"];
+	        this.Name = source["Name"];
+	    }
+	}
+
+}
+
 export namespace download {
 	
 	export class Download {

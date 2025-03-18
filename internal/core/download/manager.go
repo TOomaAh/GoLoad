@@ -13,12 +13,14 @@ import (
 
 	"github.com/TOomaAh/GoLoad/internal/core/settings"
 	"github.com/TOomaAh/GoLoad/internal/utils"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"gorm.io/gorm"
 )
 
 // Manager gère l'ensemble des téléchargements
 type Manager struct {
+	ctx             *context.Context
 	db              *gorm.DB
 	activeDownloads int
 	mutex           sync.RWMutex
@@ -43,6 +45,10 @@ func NewManager(db *gorm.DB) *Manager {
 	go dm.resumeActiveDownloads()
 
 	return dm
+}
+
+func (m *Manager) SetContext(ctx *context.Context) {
+	m.ctx = ctx
 }
 
 // resumeActiveDownloads réinitialise les téléchargements actifs au démarrage
@@ -98,13 +104,25 @@ func (m *Manager) AddDownload(url, filename, location string) (*Download, error)
 	// Créer un nouvel objet téléchargement
 	download := NewDownload(url, filename, location)
 
+	filename, err := download.GetNameFileWithHeadRequest()
+
+	if err != nil {
+		return nil, fmt.Errorf("erreur lors de la récupération du nom du fichier: %w", err)
+	}
+
+	if filename != "" {
+		download.Filename = filename
+	}
+
 	// Sauvegarder dans la base de données
 	result := m.db.Create(download)
 	if result.Error != nil {
 		return nil, fmt.Errorf("erreur lors de la création du téléchargement: %w", result.Error)
 	}
 
+	runtime.LogInfof(*m.ctx, "Nouveau téléchargement ajouté: %s", download.Filename)
 	// Démarrer automatiquement le téléchargement si le paramètre est activé
+	runtime.LogInfof(*m.ctx, "AutoStartDownloads: %v", settingsObj.AutoStartDownloads)
 	if settingsObj.AutoStartDownloads {
 		go m.ProcessQueue()
 	}
@@ -133,14 +151,16 @@ func (m *Manager) ProcessQueue() {
 
 	// Rechercher le prochain téléchargement en attente
 	var nextDownload Download
-	if result := m.db.Where("status = ?", "queued").Order("created_at").First(&nextDownload); result.Error == nil {
+	if result := m.db.Where("status = ? OR status = ?", "queued", "start").Order("created_at").First(&nextDownload); result.Error == nil {
 		go m.StartDownload(nextDownload.ID)
 	}
 }
 
 // StartDownload démarre un téléchargement spécifique
 func (m *Manager) StartDownload(id uint) {
+
 	var download Download
+
 	if result := m.db.First(&download, id); result.Error != nil {
 		log.Printf("Téléchargement avec l'ID %d non trouvé", id)
 		return
@@ -185,6 +205,7 @@ func (m *Manager) StartDownload(id uint) {
 	}()
 }
 
+// downloadFile télécharge le fichier depuis l'URL
 // downloadFile télécharge le fichier depuis l'URL
 func (m *Manager) downloadFile(ctx context.Context, download *Download) error {
 	// Créer une requête HTTP avec le contexte
@@ -254,19 +275,59 @@ func (m *Manager) downloadFile(ctx context.Context, download *Download) error {
 	settingsObj := m.GetSettings()
 
 	// Télécharger le fichier
-	buffer := make([]byte, 32*1024) // Buffer de 32KB
-	ticker := time.NewTicker(500 * time.Millisecond)
+	buffer := make([]byte, 64*1024) // Buffer de 64KB
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
+
+	// Canal done pour signaler la fermeture de la goroutine de contrôle
+	done := make(chan struct{})
+	defer close(done)
+
+	// Goroutine pour écouter les commandes de contrôle
+	go func() {
+		for {
+			select {
+			case cmd, ok := <-download.controlChan:
+				if !ok {
+					// Canal fermé, sortir
+					return
+				}
+				if cmd == "pause" {
+					log.Printf("Commande de pause reçue pour le téléchargement %d", download.ID)
+
+					// Le statut est déjà mis à jour dans PauseDownload
+					// et le contexte sera annulé par le cancel(), ce qui arrêtera la routine principale
+
+					// On retourne nil depuis la routine principale pour indiquer une pause propre
+					return
+				}
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	for {
 		select {
 		case <-ctx.Done():
+			log.Printf("Contexte annulé pour le téléchargement %d: %v", download.ID, ctx.Err())
+
+			// Vérifier si c'est une pause ou une annulation
+			var currentStatus string
+			if result := m.db.Model(&Download{}).Where("id = ?", download.ID).Select("status").Scan(&currentStatus); result.Error == nil {
+				if currentStatus == "paused" {
+					return nil // Retourner nil pour une pause (pas d'erreur)
+				}
+			}
+
 			return ctx.Err()
+
 		case <-ticker.C:
-			// Vérifier le statut actuel dans la base de données
+			// Vérifier le statut actuel dans la base de données (une fois par tick)
 			var currentStatus string
 			m.db.Model(&Download{}).Where("id = ?", download.ID).Select("status").Scan(&currentStatus)
-
 			if currentStatus == "paused" {
 				return nil
 			}
@@ -292,24 +353,27 @@ func (m *Manager) downloadFile(ctx context.Context, download *Download) error {
 				eta = "--:--"
 			}
 
-			// Mettre à jour la vitesse et l'ETA dans la base de données
-			m.db.Model(download).Updates(map[string]interface{}{
-				"speed": download.Speed,
-				"eta":   eta,
-			})
-
 			// Calculer la progression
 			var progress float64
 			if download.Size > 0 {
 				progress = float64(download.Downloaded) / float64(download.Size) * 100
 			}
 
-			// Envoyer une mise à jour du statut
+			// Mettre à jour toutes les statistiques en une seule fois
+			m.db.Model(download).Updates(map[string]interface{}{
+				"speed":      download.Speed,
+				"eta":        eta,
+				"downloaded": download.Downloaded,
+				"progress":   progress,
+			})
+
+			// Envoyer une mise à jour du statut au frontend
 			m.statusChan <- StatusUpdate{
 				DownloadID: download.ID,
 				Action:     "progress",
 				Progress:   progress,
 			}
+
 		default:
 			// Lire les données
 			n, err := resp.Body.Read(buffer)
@@ -320,17 +384,9 @@ func (m *Manager) downloadFile(ctx context.Context, download *Download) error {
 					return fmt.Errorf("erreur d'écriture fichier: %w", writeErr)
 				}
 
-				// Mettre à jour la progression
+				// Mettre à jour la progression en mémoire seulement
+				// (pas d'appel BDD ici)
 				download.Downloaded += int64(n)
-				if download.Size > 0 {
-					progress := float64(download.Downloaded) / float64(download.Size) * 100
-					m.db.Model(download).Updates(map[string]interface{}{
-						"downloaded": download.Downloaded,
-						"progress":   progress,
-					})
-				} else {
-					m.db.Model(download).Update("downloaded", download.Downloaded)
-				}
 
 				// Limiter la vitesse si nécessaire
 				if settingsObj.MaxSpeed > 0 {
@@ -349,6 +405,17 @@ func (m *Manager) downloadFile(ctx context.Context, download *Download) error {
 					finalPath := filepath.Join(download.Location, download.Filename)
 					file.Close()
 					os.Rename(tempPath, finalPath)
+
+					// Mise à jour finale à 100%
+					m.db.Model(download).Updates(map[string]interface{}{
+						"downloaded": download.Size,
+						"progress":   100.0,
+						"status":     "completed",
+						"end_time":   time.Now(),
+						"speed":      0,
+						"eta":        "00:00",
+					})
+
 					return nil
 				}
 				return fmt.Errorf("erreur de lecture: %w", err)
@@ -358,7 +425,16 @@ func (m *Manager) downloadFile(ctx context.Context, download *Download) error {
 }
 
 // onDownloadComplete est appelé lorsqu'un téléchargement est terminé
+// onDownloadComplete est appelé lorsqu'un téléchargement est terminé
 func (m *Manager) onDownloadComplete(download *Download) {
+	// Fermer le canal de contrôle pour éviter les fuites de goroutines
+	download.mutex.Lock()
+	if download.controlChan != nil {
+		close(download.controlChan)
+		download.controlChan = nil
+	}
+	download.mutex.Unlock()
+
 	// Mettre à jour le téléchargement dans la base de données
 	m.db.Model(download).Updates(map[string]interface{}{
 		"status":   "completed",
@@ -385,6 +461,14 @@ func (m *Manager) onDownloadComplete(download *Download) {
 // onDownloadError est appelé en cas d'erreur pendant le téléchargement
 func (m *Manager) onDownloadError(download *Download, err error) {
 	log.Printf("Erreur lors du téléchargement de %s: %v", download.Filename, err)
+
+	// Fermer le canal de contrôle
+	download.mutex.Lock()
+	if download.controlChan != nil && err != context.Canceled {
+		close(download.controlChan)
+		download.controlChan = nil
+	}
+	download.mutex.Unlock()
 
 	// Si l'erreur est due à une annulation, ne pas réessayer
 	if err == context.Canceled {
@@ -455,28 +539,28 @@ func (m *Manager) PauseDownload(id uint) error {
 		return fmt.Errorf("impossible de mettre en pause: statut actuel est %s", download.Status)
 	}
 
-	// Annuler l'opération en cours
-	download.Cancel()
+	// Envoyer la commande de pause à la goroutine de téléchargement
+	download.mutex.Lock() // Utilisez le mutex standard
+	if download.controlChan != nil {
+		select {
+		case download.controlChan <- "pause":
+			// La commande a été envoyée
+			log.Printf("Commande de pause envoyée pour le téléchargement %d", download.ID)
+		default:
+			// Le canal est plein ou fermé, mise à jour directe de la BDD
+			log.Printf("Canal de contrôle non disponible, mise à jour directe du statut pour le téléchargement %d", download.ID)
+			m.db.Model(&download).Updates(map[string]interface{}{
+				"status": "paused",
+				"speed":  0,
+				"eta":    "--:--",
+			})
 
-	// Mettre à jour dans la base de données
-	m.db.Model(&download).Updates(map[string]interface{}{
-		"status": "paused",
-		"speed":  0,
-		"eta":    "--:--",
-	})
-
-	m.mutex.Lock()
-	m.activeDownloads--
-	m.mutex.Unlock()
-
-	// Envoyer une notification de pause
-	m.statusChan <- StatusUpdate{
-		DownloadID: download.ID,
-		Action:     "pause",
+			m.mutex.Lock()
+			m.activeDownloads--
+			m.mutex.Unlock()
+		}
 	}
-
-	// Démarrer le prochain téléchargement en file d'attente
-	go m.ProcessQueue()
+	download.mutex.Unlock()
 
 	return nil
 }

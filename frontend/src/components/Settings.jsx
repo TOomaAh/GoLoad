@@ -151,7 +151,12 @@ const SettingsPage = ({ settings, darkMode, onUpdateSettings, onBackClick }) => 
                 />
               </div>
             </div>
-            
+            <ToggleSetting
+              id="autoStartDownloads"
+              label="Démarrer automatiquement les téléchargements"
+              value={settings.autoStartDownload || false}
+              onChange={() => handleToggle('autoStartDownloads')}
+            />
             <ToggleSetting
               id="autoRetry"
               label="Réessayer automatiquement après une erreur"

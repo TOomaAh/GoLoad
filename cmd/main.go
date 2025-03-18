@@ -27,7 +27,7 @@ func Run(assets *embed.FS) {
 
 	// Créer l'application Wails
 	err = wails.Run(&options.App{
-		Title:  "Gestionnaire de Téléchargements",
+		Title:  "GoLoad",
 		Width:  1024,
 		Height: 768,
 		AssetServer: &assetserver.Options{

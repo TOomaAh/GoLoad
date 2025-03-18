@@ -7,7 +7,7 @@ const Header = ({ darkMode, onNewDownloadClick, onSettingsClick }) => {
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold flex items-center">
           <Download className="mr-3" size={28} />
-          Gestionnaire de Téléchargement
+          GoLoad
         </h1>
         <div className="flex space-x-3">
           <button 

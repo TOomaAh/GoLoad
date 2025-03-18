@@ -21,13 +21,6 @@ func NewSpeedCalculator() *SpeedCalculator {
 	}
 }
 
-func (d *Download) SetSpeedCalc(sc *SpeedCalculator) {
-	d.Lock()
-	defer d.Unlock()
-
-	d.speedCalc = sc
-}
-
 // Update met à jour la vitesse de téléchargement et retourne la vitesse actuelle en octets/seconde
 func (sc *SpeedCalculator) Update(totalBytes int64) int64 {
 	sc.mutex.Lock()
